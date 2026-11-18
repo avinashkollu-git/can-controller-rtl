@@ -1,0 +1,43 @@
+# Lint, a short UVM regression and the C driver co-simulation on every push.
+# Distro Verilator is older than 5.050, so it is built from a pinned tag (cached).
+name: ci
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  sim:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps and z3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git help2man perl python3 make autoconf g++ flex bison \
+            ccache libfl2 libfl-dev zlib1g-dev z3
+
+      - name: Cache Verilator
+        id: vcache
+        uses: actions/cache@v4
+        with:
+          path: ~/verilator
+          key: verilator-v5.050-${{ runner.os }}
+
+      - name: Build Verilator v5.050
+        if: steps.vcache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 -b v5.050 https://github.com/verilator/verilator /tmp/vsrc
+          cd /tmp/vsrc && autoconf && ./configure --prefix=$HOME/verilator && make -j$(nproc) && make install
+
+      - name: Lint RTL
+        run: PATH=$HOME/verilator/bin:$PATH make lint
+
+      - name: Short regression (6 tests x 2 seeds, N=10)
+        run: PATH=$HOME/verilator/bin:$PATH make regress SEEDS=2 N=10 COOL=0
+
+      - name: C driver on the RTL
+        run: PATH=$HOME/verilator/bin:$PATH make driver COOL=0
+
+      - name: Publish summary
+        if: always()
+        run: cat results/regress/summary.md results/regress/coverage.md >> $GITHUB_STEP_SUMMARY || true
